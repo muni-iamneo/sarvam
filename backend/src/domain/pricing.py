@@ -44,6 +44,23 @@ def scheme_savings_paise(unit_price_paise: int, qty: int, scheme: Optional[Schem
     return 0
 
 
+def better_scheme(
+    base: Optional[SchemeSpec], push: Optional[SchemeSpec], unit_price_paise: int, qty: int
+) -> Optional[SchemeSpec]:
+    """Return whichever of ``base`` / ``push`` yields the larger savings at ``qty``.
+
+    Better-of, never stacked: a pushed per-call discount only ever *improves* the
+    retailer's deal — if the SKU's standing scheme already saves more, that wins.
+    """
+    if push is None:
+        return base
+    if base is None:
+        return push
+    push_sav = scheme_savings_paise(unit_price_paise, qty, push)
+    base_sav = scheme_savings_paise(unit_price_paise, qty, base)
+    return push if push_sav >= base_sav else base
+
+
 def quote_line(
     unit_price_paise: int, qty: int, scheme: Optional[SchemeSpec] = None
 ) -> LineQuote:

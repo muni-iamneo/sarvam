@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain import models as m
-from src.domain.pricing import SchemeSpec, quote_line, scheme_savings_paise
+from src.domain.pricing import SchemeSpec, better_scheme, quote_line, scheme_savings_paise
 
 
 @dataclass
@@ -23,6 +23,9 @@ class ToolContext:
     order_id: Optional[int] = None
     should_end: bool = False
     upsell_offered: bool = False  # suggest_upsell fires at most once per call
+    # Operator-chosen "push this product with an extra discount" for this call.
+    push_sku_id: Optional[int] = None
+    push_discount_pct: Optional[float] = None
 
 
 def _rupees(paise: int) -> float:
@@ -33,9 +36,9 @@ async def _sku(db: AsyncSession, sku_id: int) -> Optional[m.Sku]:
     return (await db.execute(select(m.Sku).where(m.Sku.id == sku_id))).scalar_one_or_none()
 
 
-async def _best_scheme(db: AsyncSession, sku: m.Sku, qty: int) -> Optional[SchemeSpec]:
+async def _best_scheme(ctx: "ToolContext", sku: m.Sku, qty: int) -> Optional[SchemeSpec]:
     schemes = (
-        await db.execute(select(m.Scheme).where(m.Scheme.sku_id == sku.id, m.Scheme.active.is_(True)))
+        await ctx.db.execute(select(m.Scheme).where(m.Scheme.sku_id == sku.id, m.Scheme.active.is_(True)))
     ).scalars().all()
     best: Optional[SchemeSpec] = None
     best_sav = 0
@@ -47,6 +50,14 @@ async def _best_scheme(db: AsyncSession, sku: m.Sku, qty: int) -> Optional[Schem
         sav = scheme_savings_paise(sku.unit_price_paise, qty, spec)
         if sav > best_sav:
             best, best_sav = spec, sav
+    # Operator's pushed product gets an extra per-call discount (better-of, never
+    # stacked) so the retailer never ends up worse than the standing scheme.
+    if ctx.push_sku_id == sku.id and ctx.push_discount_pct:
+        push = SchemeSpec(
+            kind="pct", min_qty=1, discount_pct=ctx.push_discount_pct,
+            description=f"Special call offer: {ctx.push_discount_pct:.0f}% off",
+        )
+        best = better_scheme(best, push, sku.unit_price_paise, qty)
     return best
 
 
@@ -192,7 +203,7 @@ async def get_order_summary(ctx: ToolContext, args: dict) -> dict:
         sku = await _sku(ctx.db, sid)
         if not sku:
             continue
-        spec = await _best_scheme(ctx.db, sku, qty)
+        spec = await _best_scheme(ctx, sku, qty)
         q = quote_line(sku.unit_price_paise, qty, spec)
         total += q.net_paise
         savings += q.savings_paise
@@ -225,7 +236,7 @@ async def place_order(ctx: ToolContext, args: dict) -> dict:
         sku = await _sku(ctx.db, sid)
         if not sku:
             continue
-        spec = await _best_scheme(ctx.db, sku, qty)
+        spec = await _best_scheme(ctx, sku, qty)
         q = quote_line(sku.unit_price_paise, qty, spec)
         total += q.net_paise
         ctx.db.add(m.OrderItem(order_id=order.id, sku_id=sid, qty=qty,
