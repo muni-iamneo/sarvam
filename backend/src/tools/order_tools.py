@@ -22,6 +22,7 @@ class ToolContext:
     cart: dict[int, int] = field(default_factory=dict)  # sku_id -> qty
     order_id: Optional[int] = None
     should_end: bool = False
+    upsell_offered: bool = False  # suggest_upsell fires at most once per call
 
 
 def _rupees(paise: int) -> float:
@@ -47,6 +48,37 @@ async def _best_scheme(db: AsyncSession, sku: m.Sku, qty: int) -> Optional[Schem
         if sav > best_sav:
             best, best_sav = spec, sav
     return best
+
+
+def _best_upsell(candidates: list[dict], cart_sku_ids: set[int]) -> Optional[dict]:
+    """Pick the single best upsell from ``candidates`` (pure — no DB).
+
+    Each candidate is a dict with keys: sku_id, name, pack_size,
+    unit_price_paise, stock_units, is_must_sell, scheme (a SchemeSpec).
+    We skip anything already in the cart, out of stock at the unlocking qty, or
+    with zero real saving; then pick the highest ₹ saving, breaking ties toward
+    must-sell SKUs. Returns a speakable payload or None.
+    """
+    best_key: Optional[tuple[int, int]] = None
+    best_payload: Optional[dict] = None
+    for c in candidates:
+        if c["sku_id"] in cart_sku_ids:
+            continue
+        qty = max(c["scheme"].min_qty, 1)  # the quantity that unlocks the offer
+        if c["stock_units"] < qty:
+            continue
+        sav = scheme_savings_paise(c["unit_price_paise"], qty, c["scheme"])
+        if sav <= 0:
+            continue
+        key = (sav, 1 if c["is_must_sell"] else 0)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_payload = {
+                "sku_id": c["sku_id"], "name": c["name"], "pack_size": c["pack_size"],
+                "suggested_qty": qty, "price_rupees": _rupees(c["unit_price_paise"]),
+                "offer": c["scheme"].description, "savings_rupees": _rupees(sav),
+            }
+    return best_payload
 
 
 async def lookup_products(ctx: ToolContext, args: dict) -> dict:
@@ -91,6 +123,40 @@ async def get_active_schemes(ctx: ToolContext, args: dict) -> dict:
                 "at_qty": qty,
             })
     return {"schemes": out}
+
+
+async def suggest_upsell(ctx: ToolContext, args: dict) -> dict:
+    """One extra product the retailer isn't already buying that has an active offer.
+
+    Fires at most once per call. Returns the highest-saving in-stock candidate at
+    the quantity that unlocks its scheme, or ``{"suggestion": None}`` when there's
+    nothing worth pitching.
+    """
+    if ctx.upsell_offered:
+        return {"suggestion": None}
+    ctx.upsell_offered = True
+    rows = (
+        await ctx.db.execute(
+            select(m.Sku, m.Scheme)
+            .join(m.Scheme, m.Scheme.sku_id == m.Sku.id)
+            .where(
+                m.Sku.company_id == ctx.outlet.company_id,
+                m.Sku.active.is_(True),
+                m.Scheme.active.is_(True),
+            )
+        )
+    ).all()
+    candidates = [
+        {
+            "sku_id": sku.id, "name": sku.name, "pack_size": sku.pack_size,
+            "unit_price_paise": sku.unit_price_paise, "stock_units": sku.stock_units,
+            "is_must_sell": sku.is_must_sell,
+            "scheme": SchemeSpec(kind=s.kind, min_qty=s.min_qty, discount_pct=s.discount_pct,
+                                 flat_off_paise=s.flat_off_paise, description=s.description),
+        }
+        for sku, s in rows
+    ]
+    return {"suggestion": _best_upsell(candidates, set(ctx.cart))}
 
 
 async def add_line_item(ctx: ToolContext, args: dict) -> dict:
@@ -182,6 +248,7 @@ async def end_call(ctx: ToolContext, args: dict) -> dict:
 TOOL_HANDLERS = {
     "lookup_products": lookup_products,
     "get_active_schemes": get_active_schemes,
+    "suggest_upsell": suggest_upsell,
     "add_line_item": add_line_item,
     "remove_line_item": remove_line_item,
     "get_order_summary": get_order_summary,

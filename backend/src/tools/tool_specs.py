@@ -33,6 +33,19 @@ ORDER_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "suggest_upsell",
+            "description": (
+                "Suggest ONE extra product the retailer is NOT already ordering that has an "
+                "active offer, with the exact ₹ saving at the suggested quantity. Call once, "
+                "after the usual order is confirmed and before place_order. Returns "
+                '{"suggestion": null} when there is nothing worth pitching.'
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_line_item",
             "description": "Add a quantity of a SKU (by sku_id) to the current order.",
             "parameters": {

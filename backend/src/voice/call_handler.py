@@ -6,8 +6,10 @@ pushed via ``emit_event(dict)`` (consumed by the frontend live WS). The Twilio
 media-stream handler (Phase 6) wires this to a real call.
 
 Loop: STT final transcript → Sarvam-105B stream (tools) → tool exec against
-Postgres → sentence-buffered Bulbul TTS → outbound μ-law. Server-VAD
-START_SPEECH triggers barge-in (cancel generation, tell transport to flush).
+Postgres → sentence-buffered Bulbul TTS → outbound μ-law. Server-VAD START_SPEECH triggers
+barge-in ONLY while the agent is audibly speaking (cancel generation, tell
+transport to flush); during the LLM think phase it's ignored so a hypersensitive
+VAD blip can't kill a reply before it's spoken.
 """
 
 import asyncio
@@ -81,6 +83,7 @@ class CallHandler:
         self._tts_task: Optional[asyncio.Task] = None
         self._debounce_task: Optional[asyncio.Task] = None
         self._generating = False
+        self._speaking = False  # True only once audio is actually going out
         self._t_user_final = 0.0
         self._await_first_audio = False
 
@@ -122,7 +125,13 @@ class CallHandler:
 
     # ------------------------------------------------------------------ STT cbs
     async def _on_speech_started(self) -> None:
-        if self._generating:
+        # Barge in ONLY while the agent is audibly speaking — a real interruption.
+        # During the LLM 'think' phase (_generating but not yet _speaking) the
+        # hypersensitive VAD fires START_SPEECH on the caller's trailing word /
+        # breath; barging there would kill the reply before it's ever spoken. New
+        # input in that window is instead folded into the turn by the debounce-
+        # supersede path (_debounced_generate), so nothing is lost.
+        if self._speaking:
             await self._barge_in()
 
     async def _on_transcript(self, text: str, is_final: bool, language: Optional[str]) -> None:
@@ -174,6 +183,7 @@ class CallHandler:
             self._gen_task.cancel()
         self._gen_task = None  # let _start_generation spin up the next turn cleanly
         self._generating = False
+        self._speaking = False
 
     # -------------------------------------------------------------- generation
     def _start_generation(self) -> None:
@@ -273,6 +283,7 @@ class CallHandler:
             if self._tts_task is consumer:
                 self._tts_task = None
             self._generating = False
+            self._speaking = False
 
         if self.ended:
             await self._emit({"type": "call_end"})
@@ -303,6 +314,7 @@ class CallHandler:
         if self._await_first_audio and self._t_user_final:
             self.metrics.record_response(int((time.monotonic() - self._t_user_final) * 1000))
             self._await_first_audio = False
+        self._speaking = True  # agent is now audibly talking → real barge-in armed
         await self._send_audio(audio)
 
     async def _exec_tool(self, name: str, args: dict) -> dict:
