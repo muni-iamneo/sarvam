@@ -56,6 +56,7 @@ class SarvamSTTClient(BaseSTTClient):
         self._ws = None
         self._listen_task: Optional[asyncio.Task] = None
         self._connected = False
+        self._send_failed = False  # DIAGNOSTIC: log the FIRST send failure only, not every frame
 
     def _url(self) -> str:
         base = settings.sarvam_base_url.replace("https://", "wss://").replace("http://", "ws://")
@@ -109,7 +110,14 @@ class SarvamSTTClient(BaseSTTClient):
         try:
             await self._ws.send(json.dumps(msg))
         except Exception as exc:
-            logger.warning("SarvamSTT send failed: %s", exc)
+            # DIAGNOSTIC: swallowed today (call limps on silently). Surface the FIRST failure
+            # loudly — it marks the exact moment audio stopped reaching STT (socket gone).
+            if not self._send_failed:
+                self._send_failed = True
+                logger.warning(
+                    "SarvamSTT send FAILED — audio no longer reaching STT (socket likely "
+                    "closed); no reconnect exists, so transcripts stop here: %s", exc,
+                )
 
     async def force_endpoint(self) -> None:
         if self._ws and self._connected:
@@ -119,13 +127,20 @@ class SarvamSTTClient(BaseSTTClient):
                 pass
 
     async def _listen(self) -> None:
+        logger.info("SarvamSTT listen loop started")
         try:
             async for raw in self._ws:
                 await self._handle(raw)
         except asyncio.CancelledError:
-            pass
+            return
         except Exception as exc:
-            logger.warning("SarvamSTT listen ended: %s", exc)
+            logger.warning("SarvamSTT listen ended (error): %s", exc)
+            return
+        # DIAGNOSTIC: normal async-for completion = the SERVER closed the socket. This is the
+        # prime suspect for 'greeting + one reply + silence': after this line no transcript can
+        # ever fire again and there is no reconnect. If you see this right after the first reply,
+        # that's the root cause.
+        logger.warning("SarvamSTT listen loop ENDED — server closed the socket; NO further transcripts")
 
     async def _handle(self, raw) -> None:
         try:
@@ -139,6 +154,7 @@ class SarvamSTTClient(BaseSTTClient):
         # VAD events: {"type":"events","data":{"signal_type":"START_SPEECH"|"END_SPEECH"}}
         if mtype == "events":
             signal = data.get("signal_type") or data.get("event_type")
+            logger.info("SarvamSTT VAD event: %s", signal)  # DIAGNOSTIC: confirms STT still hears audio after turn 1
             if signal == "START_SPEECH" and self._speech_cb:
                 await self._speech_cb()  # barge-in
             return
@@ -146,6 +162,10 @@ class SarvamSTTClient(BaseSTTClient):
         # Transcript: each 'data' message is a VAD-endpointed utterance → FINAL.
         if mtype == "data":
             transcript = data.get("transcript")
+            # DIAGNOSTIC: every FINAL the STT emits. If only ONE of these prints per call, the
+            # agent's silence is upstream of the handler (STT stopped), exactly as the repro showed.
+            logger.info("SarvamSTT FINAL transcript: %r (lang=%s)",
+                        (transcript or "")[:80], data.get("language_code"))
             if transcript and self._transcript_cb:
                 await self._transcript_cb(transcript.strip(), True, data.get("language_code"))
             return

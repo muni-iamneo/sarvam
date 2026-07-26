@@ -7,6 +7,7 @@ finalises the call_log row + writes a Supermemory note.
 """
 
 import json
+import time
 from datetime import datetime
 
 from sqlalchemy import select
@@ -73,6 +74,7 @@ async def run_media_stream(ws, hub: LiveHub, *, session_factory=AsyncSessionLoca
     db = None
     outlet = None
     memory = None
+    frames_in = 0  # DIAGNOSTIC: inbound Twilio media frames actually pumped to STT
 
     async def send_audio(mulaw: bytes) -> None:
         if not stream_sid:
@@ -142,17 +144,35 @@ async def run_media_stream(ws, hub: LiveHub, *, session_factory=AsyncSessionLoca
                     push_discount_pct=(cl.push_discount_pct if cl else None),
                 )
                 await hub.publish(call_id, {"type": "call_started", "outlet": outlet.name})
+                # DIAGNOSTIC: the greeting is generated INLINE here, so this await blocks the
+                # single media-reading loop for its whole duration — during which NO inbound
+                # Twilio audio is read and the Sarvam STT socket is starved. Timing the block
+                # shows how long the pump is stalled at call open.
+                _t_greet = time.monotonic()
+                logger.info("[mediastream] greeting begin — media loop BLOCKED until it returns")
                 await handler.start()
+                logger.info(
+                    "[mediastream] greeting done in %d ms — media pump resuming",
+                    int((time.monotonic() - _t_greet) * 1000),
+                )
 
             elif event == "media" and handler:
                 payload = (data.get("media") or {}).get("payload")
                 if payload:
                     await handler.on_audio_in(b64_mulaw_to_pcm16(payload))
+                    # DIAGNOSTIC: confirms the inbound pump is still alive AFTER the first reply.
+                    # If these lines stop, no audio is reaching STT → no transcripts → silence.
+                    frames_in += 1
+                    if frames_in % 250 == 0:  # ~5 s of 8 kHz audio
+                        logger.info("[mediastream] inbound frames pumped to STT: %d", frames_in)
 
             elif event == "stop":
                 break
     except Exception as exc:
-        logger.warning("media stream error: %s", exc)
+        # DIAGNOSTIC: if THIS fires shortly after the first reply, the Twilio WS loop itself
+        # died (prime suspect: concurrent ws.send_text from the TTS task + a barge-in 'clear'),
+        # which stops the inbound pump and silences the agent. Full traceback to disambiguate.
+        logger.exception("media stream loop CRASHED — inbound audio pump stopped: %s", exc)
     finally:
         if handler and outlet is not None and db is not None:
             await _finalize(hub, call_id, handler, outlet, memory, db)
