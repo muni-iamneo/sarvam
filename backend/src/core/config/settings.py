@@ -72,10 +72,12 @@ class Settings(BaseSettings):
     sarvam_llm_model: str = Field(default="sarvam-105b")
     sarvam_llm_temperature: float = Field(default=0.2)
     sarvam_reasoning_effort: str | None = Field(
-        default=None,
-        description="null|low|medium|high. sarvam-105b/30b are reasoning models; "
-        "thinking is ON by default (low) and costs 10-19s of pre-speech reasoning. "
-        "null disables it (first content in ~0.45s). Keep null for the live loop.",
+        default="low",
+        description="null|low|medium|high. sarvam-105b/30b are reasoning models. "
+        "'low' is REQUIRED for the live loop: without thinking the model loses track "
+        "of call state and just re-greets every turn, never advancing to tools/order "
+        "(observed: 0 completed orders with null). null is ~0.5s faster to first token "
+        "but breaks the conversation — do not use it for the dialogue loop.",
     )
     sarvam_llm_max_tokens: int = Field(
         default=640,

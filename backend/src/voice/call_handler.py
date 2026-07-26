@@ -33,6 +33,13 @@ logger = get_logger(__name__)
 MAX_TOOL_HOPS = 6
 _TTS_STOP = object()  # sentinel: no more sentences to speak this turn
 
+# After a FINAL transcript, wait this long for another before generating. Sarvam's VAD
+# chops halting speech into many short finals ("enakku" / "Colgate Strong" / "100 gram");
+# without coalescing, each one cancels the in-flight turn (barge-in storm) so the agent
+# never finishes a reply AND only ever sees disconnected scraps it can't act on. A brief
+# debounce merges the fragments into one coherent turn. Tune down for snappier turns.
+_ENDPOINT_DEBOUNCE_S = 0.6
+
 GREETING_NUDGE = (
     "Begin the call now: greet the retailer warmly by name in their language, "
     "then confirm this week's usual order."
@@ -72,6 +79,7 @@ class CallHandler:
         self.metrics = SessionMetrics()
         self._gen_task: Optional[asyncio.Task] = None
         self._tts_task: Optional[asyncio.Task] = None
+        self._debounce_task: Optional[asyncio.Task] = None
         self._generating = False
         self._t_user_final = 0.0
         self._await_first_audio = False
@@ -99,6 +107,8 @@ class CallHandler:
         }
 
     async def close(self) -> None:
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
         if self._gen_task and not self._gen_task.done():
             self._gen_task.cancel()
         try:
@@ -126,16 +136,28 @@ class CallHandler:
         self.transcript.append({"role": "user", "text": text})
         await self._emit({"type": "user_transcript", "text": text})
         self.messages.append({"role": "user", "content": text})
-        # A fresh final transcript while a turn is still generating (e.g. a second
-        # VAD-endpointed segment with no new START_SPEECH, or the user talking
-        # over the agent) must supersede it — cancel the in-flight turn so this
-        # one actually spawns. Without this, _start_generation would no-op and
-        # the utterance would be dropped, and the stale turn would log a bogus
-        # first-audio latency against the just-overwritten timestamp.
-        if self._gen_task and not self._gen_task.done():
-            await self._barge_in()
         self._t_user_final = time.monotonic()
         self._await_first_audio = True
+        # Don't generate yet — (re)arm a short debounce. Each further fragment that
+        # lands within the window resets it and is appended above, so a burst of finals
+        # coalesces into ONE turn. Generation (and any supersede-in-flight barge-in) is
+        # deferred to _debounced_generate once the caller actually pauses.
+        self._arm_generation()
+
+    def _arm_generation(self) -> None:
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+        self._debounce_task = asyncio.create_task(self._debounced_generate())
+
+    async def _debounced_generate(self) -> None:
+        try:
+            await asyncio.sleep(_ENDPOINT_DEBOUNCE_S)
+        except asyncio.CancelledError:
+            return
+        # The caller has paused. If a turn is still in flight (they talked over a
+        # reply that had already started), supersede it with the coalesced input.
+        if self._gen_task and not self._gen_task.done():
+            await self._barge_in()
         self._start_generation()
 
     # ---------------------------------------------------------------- barge-in

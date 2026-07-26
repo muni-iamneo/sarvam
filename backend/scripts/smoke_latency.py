@@ -111,17 +111,25 @@ async def test_barge_in():
 
 
 async def test_overlap_supersedes():
-    # Two FINAL transcripts arrive back-to-back with no barge-in between them
-    # (second VAD segment). The second must supersede the first, not be dropped.
+    # Two FINAL transcripts arrive back-to-back (a second VAD fragment). They must
+    # COALESCE into one turn — both kept, ONE generation, not dropped and not a
+    # barge-in storm that starves the reply.
     tts = FakeTTS()
     h = make_handler(FakeLLM("Reply one. ", delay=0.02), tts)
-    await h._on_transcript("ten cases", True, "hi-IN")   # spawns gen 1
-    await h._on_transcript("of Surf Excel", True, "hi-IN")  # must barge-in + respawn
+    await h._on_transcript("ten cases", True, "hi-IN")       # arms the debounce
+    await h._on_transcript("of Surf Excel", True, "hi-IN")   # re-arms; coalesces
+    # Wait out the debounce, then the coalesced generation.
+    for _ in range(200):
+        busy = (h._debounce_task and not h._debounce_task.done()) or \
+               (h._gen_task and not h._gen_task.done())
+        if not busy and tts.spoken:
+            break
+        await asyncio.sleep(0.02)
     if h._gen_task:
         await h._gen_task
     users = [m for m in h.messages if m.get("role") == "user"]
     check("both user segments kept", len(users) == 2)
-    check("superseding turn produced speech", len(tts.spoken) >= 1)
+    check("coalesced turn produced speech", len(tts.spoken) >= 1)
     check("metric not poisoned (<=1 sample)", len(h.metrics.response_latencies_ms) <= 1)
 
 
