@@ -269,6 +269,24 @@ async def list_orders(db: AsyncSession, cid: int, limit: int = 50) -> list[s.Ord
     return out
 
 
+async def list_products(
+    db: AsyncSession, cid: int, q: Optional[str] = None, limit: int = 25
+) -> list[s.ProductOut]:
+    """Active SKUs for this tenant, searchable by name — powers the push-product picker."""
+    stmt = select(m.Sku).where(m.Sku.company_id == cid, m.Sku.active.is_(True))
+    if q:
+        stmt = stmt.where(m.Sku.name.ilike(f"%{q}%"))
+    stmt = stmt.order_by(m.Sku.is_must_sell.desc(), m.Sku.name).limit(limit)
+    rows = (await db.execute(stmt)).scalars().all()
+    return [
+        s.ProductOut(
+            sku_id=r.id, name=r.name, code=r.code, pack_size=r.pack_size,
+            unit_price_rupees=round(r.unit_price_paise / 100, 2), unit_label=r.unit_label,
+        )
+        for r in rows
+    ]
+
+
 # ------------------------------------------------------------------ calls
 async def _outlet_names(db: AsyncSession, cid: int) -> dict[int, tuple[str, str]]:
     rows = (

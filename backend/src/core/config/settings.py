@@ -127,3 +127,22 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+
+# Sarvam-supported conversation languages (bulbul:v3 TTS + saaras:v3 STT). Single
+# source of truth for the operator's per-call language choice; served to the UI via
+# GET /api/config/languages and validated against on both call-start flows.
+SUPPORTED_LANGUAGES: list[dict[str, str]] = [
+    {"code": "hi-IN", "label": "Hindi"},
+    {"code": "en-IN", "label": "English"},
+    {"code": "bn-IN", "label": "Bengali"},
+    {"code": "gu-IN", "label": "Gujarati"},
+    {"code": "kn-IN", "label": "Kannada"},
+    {"code": "ml-IN", "label": "Malayalam"},
+    {"code": "mr-IN", "label": "Marathi"},
+    {"code": "od-IN", "label": "Odia"},
+    {"code": "pa-IN", "label": "Punjabi"},
+    {"code": "ta-IN", "label": "Tamil"},
+    {"code": "te-IN", "label": "Telugu"},
+]
+SUPPORTED_LANGUAGE_CODES: frozenset[str] = frozenset(lang["code"] for lang in SUPPORTED_LANGUAGES)

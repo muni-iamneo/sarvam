@@ -101,6 +101,22 @@ class BrandManagerOut(BaseModel):
     n_brands: int = 0
 
 
+class ProductOut(BaseModel):
+    """A SKU the operator can pick to push on a call."""
+    sku_id: int
+    name: str
+    code: str
+    pack_size: Optional[str] = None
+    unit_price_rupees: float
+    unit_label: str
+
+
+class LanguageOut(BaseModel):
+    """A Sarvam-supported conversation language for the call-start dropdown."""
+    code: str
+    label: str
+
+
 class OrderItemOut(BaseModel):
     sku_name: str
     qty: int

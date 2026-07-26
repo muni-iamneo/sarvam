@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
+from src.core.config.settings import SUPPORTED_LANGUAGES
 from src.domain import models as m
 from src.domain import repository as repo
 from src.domain import schemas as s
@@ -22,6 +23,18 @@ async def ctx(db: AsyncSession = Depends(get_db)) -> tuple[AsyncSession, int, st
     if row is None:
         raise HTTPException(status_code=503, detail="No company seeded — run scripts/seed.py")
     return db, row.id, row.name
+
+
+@router.get("/config/languages", response_model=list[s.LanguageOut])
+async def config_languages() -> list[dict]:
+    """Sarvam-supported conversation languages for the call-start dropdown."""
+    return SUPPORTED_LANGUAGES
+
+
+@router.get("/products", response_model=list[s.ProductOut])
+async def products(q: Optional[str] = None, limit: int = 25, c=Depends(ctx)):
+    db, cid, _ = c
+    return await repo.list_products(db, cid, q=q, limit=limit)
 
 
 @router.get("/overview", response_model=s.OverviewOut)
