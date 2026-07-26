@@ -71,3 +71,22 @@ async def test_start_call_forwards_targeting(client, seeded, monkeypatch):
         "push_discount_pct": 15.0, "outlet_id": seeded["outlet_id"],
     }
     assert r.json()["call_id"] == 123
+
+
+# ---- schedule validation ----
+
+async def test_create_schedule_rejects_unsupported_language(client, seeded):
+    r = await client.post("/api/schedules", json={
+        "mode": "now", "language": "fr-FR",
+        "items": [{"outlet_id": seeded["outlet_id"]}],
+    })
+    assert r.status_code == 400
+
+
+async def test_create_schedule_accepts_valid_targeting(client, seeded):
+    r = await client.post("/api/schedules", json={
+        "mode": "now", "language": "ta-IN",
+        "push_sku_id": seeded["sku_a"], "push_discount_pct": 15.0,
+        "items": [{"outlet_id": seeded["outlet_id"]}],
+    })
+    assert r.status_code == 201, r.text

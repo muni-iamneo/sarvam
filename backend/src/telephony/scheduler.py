@@ -107,7 +107,7 @@ class CallScheduler:
             schedule, item = picked
             if schedule.status == "pending":
                 schedule.status = "running"
-            await self._start_item(db, item, now)
+            await self._start_item(db, schedule, item, now)
             await db.commit()
             await self._complete_finished(db, now)
 
@@ -163,7 +163,9 @@ class CallScheduler:
                 return sch, item
         return None
 
-    async def _start_item(self, db, item: m.CallScheduleItem, now: datetime) -> None:
+    async def _start_item(
+        self, db, schedule: m.CallSchedule, item: m.CallScheduleItem, now: datetime
+    ) -> None:
         outlet = (
             await db.execute(select(m.Outlet).where(m.Outlet.id == item.outlet_id))
         ).scalar_one_or_none()
@@ -178,7 +180,12 @@ class CallScheduler:
             item.ended_at = now
             return
         try:
-            call_id, _sid = await self._dial(db, outlet, item.to_number)
+            call_id, _sid = await self._dial(
+                db, outlet, item.to_number,
+                language=schedule.language,
+                push_sku_id=schedule.push_sku_id,
+                push_discount_pct=schedule.push_discount_pct,
+            )
             item.call_id = call_id
             item.status = "calling"
             item.started_at = now

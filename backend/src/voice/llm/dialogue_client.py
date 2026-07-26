@@ -5,6 +5,7 @@ with the OpenAI SDK, with streaming + tool-calling.
 """
 
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 
@@ -18,6 +19,60 @@ logger = get_logger(__name__)
 TokenCb = Callable[[str], Awaitable[None]]
 ToolCb = Callable[[str, dict, str], Awaitable[None]]  # (name, args, tool_call_id)
 CompleteCb = Callable[[str], Awaitable[None]]
+
+# Sarvam-105B sometimes emits a tool call as PLAIN-TEXT content in its native
+# template instead of via the structured OpenAI ``tool_calls`` field — the
+# endpoint's tool-parser fails to convert it and the raw template leaks into the
+# content stream, e.g.:
+#     get_active_schemes
+#     <arg_key>sku_ids</arg_key>
+#     <arg_value>[2]</arg_value>
+# Unhandled, this gets spoken to the retailer (SentenceBuffer flushes on \n) AND
+# the tool never runs. We parse the leak back into a real tool call and suppress
+# it from the spoken/transcript stream. `<arg_key>` is the unambiguous marker —
+# no natural Indic reply contains it.
+_ARG_PAIR = re.compile(
+    r"<arg_key>\s*(?P<key>.*?)\s*</arg_key>\s*<arg_value>\s*(?P<val>.*?)\s*</arg_value>",
+    re.DOTALL,
+)
+_LEAK_MARKER = "<arg_key>"
+
+
+def _coerce_arg(raw: str):
+    """Parse a leaked ``<arg_value>`` payload — JSON when it parses (``[2]`` →
+    ``[2]``, ``20`` → ``20``), otherwise the raw string."""
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return raw
+
+
+def parse_leaked_tool_calls(text: str, known_names: set[str]) -> list[tuple[str, dict]]:
+    """Extract tool calls from Sarvam's leaked ``<arg_key>/<arg_value>`` text.
+
+    Returns ``[(name, args), ...]`` in emission order. A block begins at a bare
+    known tool name and owns every arg pair up to the next bare tool name, so
+    multiple back-to-back leaked calls parse correctly. Prose with no leak
+    marker returns ``[]``.
+    """
+    if not known_names:
+        return []
+    # One ordered scanner over BOTH tokens: a bare tool name opens a new call,
+    # an arg pair adds to the open call. Arg pairs come first in the alternation
+    # so a name appearing inside a value can't be mistaken for a header.
+    name_alt = "|".join(re.escape(n) for n in sorted(known_names, key=len, reverse=True))
+    token = re.compile(
+        r"<arg_key>\s*(?P<key>.*?)\s*</arg_key>\s*<arg_value>\s*(?P<val>.*?)\s*</arg_value>"
+        r"|(?P<name>\b(?:" + name_alt + r")\b)",
+        re.DOTALL,
+    )
+    calls: list[tuple[str, dict]] = []
+    for match in token.finditer(text):
+        if match.group("name"):
+            calls.append((match.group("name"), {}))
+        elif calls:  # an arg pair with no preceding name has nowhere to attach
+            calls[-1][1][match.group("key")] = _coerce_arg(match.group("val"))
+    return calls
 
 
 class DialogueLLMClient:

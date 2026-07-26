@@ -247,6 +247,10 @@ class ScheduleCreate(BaseModel):
     mode: str = "now"  # now|scheduled
     scheduled_at: Optional[datetime] = None
     items: list[ScheduleItemIn] = []
+    # Campaign-level targeting applied to every call in the batch.
+    language: str  # required; validated against SUPPORTED_LANGUAGE_CODES
+    push_sku_id: Optional[int] = None
+    push_discount_pct: Optional[float] = None
 
 
 class ScheduleItemOut(BaseModel):

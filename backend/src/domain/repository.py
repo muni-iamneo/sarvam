@@ -590,6 +590,9 @@ async def create_schedule(db: AsyncSession, cid: int, payload: s.ScheduleCreate)
         mode="scheduled" if payload.mode == "scheduled" else "now",
         scheduled_at=payload.scheduled_at if payload.mode == "scheduled" else None,
         status="pending",
+        language=payload.language,
+        push_sku_id=payload.push_sku_id,
+        push_discount_pct=payload.push_discount_pct,
     )
     db.add(sch)
     await db.flush()

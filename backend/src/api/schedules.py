@@ -5,10 +5,13 @@ here; these endpoints only manage schedule state.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 
 from src.api.dashboard import ctx
+from src.domain import models as m
 from src.domain import repository as repo
 from src.domain import schemas as s
+from src.domain.targeting import TargetingError, validate_targeting
 
 router = APIRouter(prefix="/api", tags=["schedules"])
 
@@ -22,6 +25,16 @@ async def create_schedule(payload: s.ScheduleCreate, c=Depends(ctx)):
         raise HTTPException(status_code=400, detail="scheduled_at required when mode='scheduled'")
     if not payload.items:
         raise HTTPException(status_code=400, detail="at least one outlet is required")
+    try:
+        validate_targeting(payload.language, payload.push_sku_id, payload.push_discount_pct)
+    except TargetingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if payload.push_sku_id is not None:
+        sku = (
+            await db.execute(select(m.Sku).where(m.Sku.id == payload.push_sku_id))
+        ).scalar_one_or_none()
+        if sku is None or sku.company_id != cid:
+            raise HTTPException(status_code=400, detail="pushed product not in this company")
     result = await repo.create_schedule(db, cid, payload)
     if result.n_items == 0:
         raise HTTPException(status_code=400, detail="no valid outlets for this company")
