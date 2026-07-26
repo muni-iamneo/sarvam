@@ -1,0 +1,15 @@
+[project]
+name = "bharatbeat-backend"
+version = "0.1.0"
+description = "BharatBeat — Indic voice agent + FMCG distribution console (backend)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    container_name: bharatbeat-db
+    environment:
+      POSTGRES_USER: bharatbeat
+      POSTGRES_PASSWORD: bharatbeat
+      POSTGRES_DB: bharatbeat
+    ports:
+      - "5432:5432"
+    volumes:
+      - bharatbeat_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bharatbeat"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bharatbeat_pgdata:
