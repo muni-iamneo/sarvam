@@ -346,9 +346,9 @@ export default function Agent() {
   return (
     <>
       <PageHeader
-        kicker="Live demo"
-        title="Voice agent"
-        subtitle="Trigger a renewal call or schedule a batch, watch it live, and review the transcript, order and post-call summary."
+        kicker="Voice agent"
+        title="Call History"
+        subtitle="Review past renewal calls — transcript, order and post-call summary — or schedule a new call to run."
         actions={
           <div className="flex items-center gap-2">
             <button className="bb-pill" onClick={() => setPickerOpen(true)}>

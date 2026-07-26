@@ -14,6 +14,7 @@ import type { Delivery, RepDeliveries, RepVisitAlerts, VisitAlert } from '../lib
 const SIGNAL_LABEL: Record<string, string> = {
   declined: 'Declined renewal',
   unreachable: 'Unreachable',
+  visit_requested: 'Visit requested',
   complaint: 'Complaint',
   competitor: 'Competitor risk',
   overstock: 'Overstocked',

@@ -11,7 +11,7 @@ import {
 
 const NAV = [
   { to: '/', label: 'Overview', icon: FaChartLine, end: true },
-  { to: '/agent', label: 'Voice Agents', icon: FaPhoneVolume, end: false },
+  { to: '/agent', label: 'Call History', icon: FaPhoneVolume, end: false },
   { to: '/field-ops', label: 'Field Ops', icon: FaListCheck, end: false },
   { to: '/regions', label: 'Region Targets', icon: FaMapLocationDot, end: false },
   { to: '/retailers', label: 'Retailers', icon: FaStore, end: false },

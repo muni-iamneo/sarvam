@@ -404,8 +404,15 @@ async def list_deliveries(db: AsyncSession, cid: int) -> list[s.RepDeliveriesOut
     return result
 
 
-# Negative signals detected in the (English) call summary → churn / visit reasons.
+# Signals detected in the (English) call summary → churn / visit reasons. A retailer
+# explicitly asking for an in-person visit is the strongest "go here" signal there is,
+# so it lives here alongside the churn cues rather than being inferred from an outcome.
 _ALERT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "visit_requested": ("requested a visit", "request a visit", "asked for a visit", "wants a visit",
+                        "want a visit", "visit request", "asked the rep to visit", "asked us to visit",
+                        "visit the shop", "visit the store", "come to the shop", "come to the store",
+                        "come and visit", "in-person visit", "in person visit", "physical visit",
+                        "meet in person", "send a rep", "send someone", "wants someone to come"),
     "complaint": ("complaint", "complain", "damaged", "damage", "expired", "unhappy",
                   "angry", "frustrat", "poor service", "credit", "payment", "not paid", "dispute"),
     "competitor": ("competitor", "competing", "other brand", "switch", "switching", "rival",
@@ -416,6 +423,7 @@ _ALERT_KEYWORDS: dict[str, tuple[str, ...]] = {
 _SIGNAL_TEXT = {
     "declined": "Declined the renewal on the last call",
     "unreachable": "Repeatedly unreachable (no answer / failed calls)",
+    "visit_requested": "Asked for an in-person visit from the sales rep",
     "complaint": "Raised a complaint or a service / payment issue",
     "competitor": "Mentioned a competitor or considering switching brands",
     "overstock": "Overstocked — holding back on ordering",
@@ -470,7 +478,7 @@ async def list_visit_alerts(db: AsyncSession, cid: int, days: int = 30) -> list[
         if not signals:
             continue  # healthy (e.g. ordered, no negatives) — no visit needed
 
-        urgent = any(s in ("complaint", "competitor") for s in signals) or unreachable >= 3
+        urgent = any(s in ("complaint", "competitor", "visit_requested") for s in signals) or unreachable >= 3
         reason = (last.summary or "").strip() or "; ".join(_SIGNAL_TEXT.get(s, s) for s in signals)
         name, code, area_id, lang = outlet_rows[oid]
         alerts_by_rep.setdefault(outlet_rep.get(oid), []).append(s.VisitAlertOut(

@@ -203,11 +203,11 @@ async def api_call_recording(call_id: int, request: Request, c=Depends(ctx)):
         fwd_headers["Range"] = request.headers["range"]
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, read=None))
-    req = client.build_request(
-        "GET", media_url, headers=fwd_headers,
+    req = client.build_request("GET", media_url, headers=fwd_headers)
+    upstream = await client.send(
+        req, stream=True,
         auth=(settings.twilio_account_sid, settings.twilio_auth_token),
     )
-    upstream = await client.send(req, stream=True)
     if upstream.status_code >= 400:
         await upstream.aclose()
         await client.aclose()

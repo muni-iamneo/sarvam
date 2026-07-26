@@ -125,6 +125,33 @@ async def test_overlap_supersedes():
     check("metric not poisoned (<=1 sample)", len(h.metrics.response_latencies_ms) <= 1)
 
 
+async def test_greeting_nudge_one_shot():
+    # The greeting nudge must kick off ONLY the first turn. If it lingers in the
+    # message list it re-fires a full greeting every turn (the "agent keeps
+    # re-greeting, never advances" regression) — worse once reasoning is off.
+    from src.voice.call_handler import GREETING_NUDGE
+    tts = FakeTTS()
+
+    class RecordingLLM(FakeLLM):
+        def __init__(self):
+            super().__init__("Vanakkam! Usual order confirm panra?")
+            self.saw_nudge = []
+
+        async def stream(self, messages, tools, on_token, on_tool, on_complete):
+            self.saw_nudge.append(any(m.get("content") == GREETING_NUDGE for m in messages))
+            await super().stream(messages, tools, on_token, on_tool, on_complete)
+
+    llm = RecordingLLM()
+    h = make_handler(llm, tts)
+    await h._generate(greeting=True)          # turn 0 (greeting)
+    h.messages.append({"role": "user", "content": "Okay"})
+    await h._generate()                        # turn 1 (reply)
+    check("greeting turn sees the nudge", llm.saw_nudge[0] is True)
+    check("later turn does NOT see the nudge", llm.saw_nudge[1] is False)
+    check("nudge removed from messages", not any(m.get("content") == GREETING_NUDGE for m in h.messages))
+    check("greeting kept in history", any(m.get("role") == "assistant" for m in h.messages))
+
+
 async def test_order_tools_arg_validation():
     from src.tools.order_tools import add_line_item, remove_line_item
     from src.tools.order_tools import ToolContext
@@ -143,6 +170,7 @@ async def main():
     await test_pipeline_order()
     await test_barge_in()
     await test_overlap_supersedes()
+    await test_greeting_nudge_one_shot()
     await test_order_tools_arg_validation()
     print("\n" + ("ALL SMOKE CHECKS PASSED" if not failures else f"FAILURES: {failures}"))
     raise SystemExit(1 if failures else 0)

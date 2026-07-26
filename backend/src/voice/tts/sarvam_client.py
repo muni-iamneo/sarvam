@@ -43,6 +43,17 @@ class SarvamBulbulTTSClient(BaseTTSClient):
     async def synthesize(self, text: str, language_code: str) -> bytes:
         if not text or not text.strip():
             return b""
+        # Bulbul rejects text with no letter/digit ("...", "—", a lone emoji) with a 400
+        # ("must contain at least one character from the allowed languages"). The sentence
+        # buffer's early clause-flush can hand us exactly such a fragment — there's nothing
+        # to speak, so skip it silently instead of burning a failed request.
+        if not any(c.isalnum() for c in text):
+            return b""
+        # Hard v3 limit is 2500 chars; the buffer caps chunks well below this, but guard
+        # anyway so an oversized string degrades to truncated speech, not a 400.
+        if len(text) > 2500:
+            logger.warning("Bulbul TTS text %d chars > 2500 limit; truncating", len(text))
+            text = text[:2500]
         self._chars += len(text)
         payload = {
             "text": text,
@@ -59,6 +70,11 @@ class SarvamBulbulTTSClient(BaseTTSClient):
             if not audios:
                 return b""
             return strip_wav_header(base64.b64decode(audios[0]))
+        except httpx.HTTPStatusError as exc:
+            # Surface Sarvam's error body — the bare exception hides why it 400'd.
+            logger.warning("Bulbul TTS failed (%s) %s: %s", language_code,
+                           exc.response.status_code, exc.response.text[:300])
+            return b""
         except Exception as exc:
             logger.warning("Bulbul TTS failed (%s): %s", language_code, exc)
             return b""

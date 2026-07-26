@@ -58,6 +58,10 @@ class CallHandler:
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
         self._send_audio = send_audio
         self._emit = emit_event
+        # STT stays on auto-detect ("unknown") so the agent can open in the outlet's
+        # default language and follow the caller into whatever language they actually
+        # speak. The STT is messy on short 8 kHz turns, but that was always true — a
+        # reasoning-capable LLM rides through it (see call #9); the real fix is the LLM.
         self.stt = stt or SarvamSTTClient()
         self.tts = tts or SarvamBulbulTTSClient()
         self.llm = llm or DialogueLLMClient()
@@ -157,8 +161,15 @@ class CallHandler:
 
     async def _generate(self, greeting: bool = False) -> None:
         self._generating = True
+        # The greeting nudge is a ONE-SHOT kickoff, not a standing instruction: it's
+        # removed in the finally below once the greeting turn is done. Left in the
+        # message list it re-fires a full greeting on every later turn — harmless when
+        # the model reasons ("I already greeted"), but with reasoning off (the latency
+        # fix) the model follows it literally and re-greets forever instead of advancing.
+        nudge: Optional[dict] = None
         if greeting:
-            self.messages.append({"role": "system", "content": GREETING_NUDGE})
+            nudge = {"role": "system", "content": GREETING_NUDGE}
+            self.messages.append(nudge)
         # One ordered TTS pipeline for the whole turn: the LLM keeps streaming and
         # segmenting while a single consumer synthesises + sends audio in FIFO
         # order, so sentence N is spoken while sentence N+1 is still generating.
@@ -230,6 +241,11 @@ class CallHandler:
             logger.error("generation error: %s", exc)
             consumer.cancel()
         finally:
+            if nudge is not None:
+                try:
+                    self.messages.remove(nudge)  # one-shot: never let it drive a later turn
+                except ValueError:
+                    pass
             if not consumer.done():
                 consumer.cancel()
             if self._tts_task is consumer:
