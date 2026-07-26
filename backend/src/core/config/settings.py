@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     sarvam_stt_mode: str = Field(default="transcribe", description="transcribe|codemix|translate")
     sarvam_stt_language: str = Field(default="unknown", description="'unknown' = auto-detect")
     sarvam_sample_rate: int = Field(default=8000, description="Telephony-native 8 kHz")
+    endpoint_debounce_s: float = Field(
+        default=0.45,
+        description="Seconds to wait after a FINAL transcript for more fragments before "
+        "generating. Coalesces Sarvam's over-segmented finals into one turn; also the "
+        "largest fixed slice of round-trip latency. Lower = snappier turns; too low risks "
+        "splitting one utterance. Safe to keep low now that the think phase is barge-proof.",
+    )
     sarvam_tts_model: str = Field(default="bulbul:v3")
     sarvam_tts_speaker: str = Field(default="priya", description="Must be a bulbul:v3 speaker")
     sarvam_tts_default_language: str = Field(default="hi-IN", description="Fallback TTS language")

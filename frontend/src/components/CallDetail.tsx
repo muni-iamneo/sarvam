@@ -26,8 +26,21 @@ function StatusPill({ label, live }: { label: string; live?: boolean }) {
   )
 }
 
-function Bubble({ turn }: { turn: TranscriptTurn }) {
+function fmtElapsed(ms?: number): string | null {
+  if (ms == null) return null
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+function gapBetween(prev: TranscriptTurn | undefined, cur: TranscriptTurn): number | undefined {
+  if (!prev || prev.t_ms == null || cur.t_ms == null) return undefined
+  const g = cur.t_ms - prev.t_ms
+  return g >= 0 ? g : undefined
+}
+
+function Bubble({ turn, gapMs }: { turn: TranscriptTurn; gapMs?: number }) {
   const isUser = turn.role === 'user'
+  const elapsed = fmtElapsed(turn.t_ms)
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -38,11 +51,22 @@ function Bubble({ turn }: { turn: TranscriptTurn }) {
         }`}
       >
         <div
-          className={`mb-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+          className={`mb-0.5 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide ${
             isUser ? 'text-on-dark-accent' : 'text-violet'
           }`}
         >
-          {isUser ? 'Retailer' : 'Agent'}
+          <span>{isUser ? 'Retailer' : 'Agent'}</span>
+          {elapsed && <span className="font-normal tabular-nums opacity-70">{elapsed}</span>}
+          {gapMs != null && (
+            <span
+              className={`rounded px-1 py-px font-normal tabular-nums ${
+                isUser ? 'bg-white/15 text-white/85' : 'bg-violet/10 text-violet/80'
+              }`}
+              title="gap since previous turn (round-trip latency)"
+            >
+              +{(gapMs / 1000).toFixed(1)}s
+            </span>
+          )}
         </div>
         {turn.text}
       </div>
@@ -85,7 +109,7 @@ function TranscriptScroller({
   return (
     <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
       {turns.map((t, i) => (
-        <Bubble key={i} turn={t} />
+        <Bubble key={i} turn={t} gapMs={gapBetween(turns[i - 1], t)} />
       ))}
       {bargeIn && (
         <div className="text-center text-[11px] font-semibold uppercase tracking-wide text-violet/70">

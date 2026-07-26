@@ -128,11 +128,14 @@ function reduce(s: CallLiveState, ev: LiveEvent): CallLiveState {
     case 'user_transcript':
       return {
         ...s,
-        transcript: [...s.transcript, { role: 'user', text: ev.text }],
+        transcript: [...s.transcript, { role: 'user', text: ev.text, t_ms: ev.t_ms }],
         partial: null,
       }
     case 'agent_text':
-      return { ...s, transcript: [...s.transcript, { role: 'agent', text: ev.text }] }
+      return {
+        ...s,
+        transcript: [...s.transcript, { role: 'agent', text: ev.text, t_ms: ev.t_ms }],
+      }
     case 'tool':
       if (ev.name === 'get_order_summary' || ev.name === 'place_order') {
         return { ...s, liveOrder: { ...s.liveOrder, ...toLiveOrder(ev.result) } }

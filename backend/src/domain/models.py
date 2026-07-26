@@ -274,6 +274,10 @@ class CallSchedule(Base):
     name: Mapped[str | None] = mapped_column(String(160), default=None)
     mode: Mapped[str] = mapped_column(String(12), default="now")  # now|scheduled
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Campaign-level call targeting applied to every outlet in the batch.
+    language: Mapped[str | None] = mapped_column(String(10), default=None)  # seeds turn-1 language
+    push_sku_id: Mapped[int | None] = mapped_column(Integer, index=True, default=None)  # soft ref to skus.id
+    push_discount_pct: Mapped[float | None] = mapped_column(Float, default=None)  # extra % off the pushed SKU
     # pending -> running -> completed ; also canceled|failed
     status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -310,6 +314,10 @@ class CallLog(Base):
     transcript: Mapped[str | None] = mapped_column(Text, default=None)  # JSON-encoded turns
     summary: Mapped[str | None] = mapped_column(Text, default=None)
     language_detected: Mapped[str | None] = mapped_column(String(10), default=None)
+    # Operator-chosen call targeting (set at dial time; read by the media stream).
+    initial_language: Mapped[str | None] = mapped_column(String(10), default=None)  # seeds turn-1 language
+    push_sku_id: Mapped[int | None] = mapped_column(Integer, index=True, default=None)  # soft ref to skus.id
+    push_discount_pct: Mapped[float | None] = mapped_column(Float, default=None)  # extra % off the pushed SKU
     order_id: Mapped[int | None] = mapped_column(Integer, index=True, default=None)
     latency_p50_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     cost_inr_paise: Mapped[int] = mapped_column(BigInteger, default=0)

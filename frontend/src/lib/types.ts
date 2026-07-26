@@ -214,6 +214,7 @@ export interface CallLog {
 export interface TranscriptTurn {
   role: 'user' | 'agent'
   text: string
+  t_ms?: number // ms since call start — lets the UI show the gap between turns
 }
 
 export interface CallDetail extends CallLog {
@@ -278,8 +279,8 @@ export interface LiveOrder {
 export type LiveEvent =
   | { type: 'call_started'; outlet: string }
   | { type: 'partial_transcript'; text: string }
-  | { type: 'user_transcript'; text: string }
-  | { type: 'agent_text'; text: string }
+  | { type: 'user_transcript'; text: string; t_ms?: number }
+  | { type: 'agent_text'; text: string; t_ms?: number }
   | { type: 'tool'; name: string; result: Record<string, unknown> }
   | { type: 'order_placed'; order: LiveOrder }
   | { type: 'barge_in' }

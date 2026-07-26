@@ -20,6 +20,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import settings
 from src.core.logging import get_logger
 from src.domain import models as m
 from src.tools.order_tools import TOOL_HANDLERS, ToolContext
@@ -39,8 +40,8 @@ _TTS_STOP = object()  # sentinel: no more sentences to speak this turn
 # chops halting speech into many short finals ("enakku" / "Colgate Strong" / "100 gram");
 # without coalescing, each one cancels the in-flight turn (barge-in storm) so the agent
 # never finishes a reply AND only ever sees disconnected scraps it can't act on. A brief
-# debounce merges the fragments into one coherent turn. Tune down for snappier turns.
-_ENDPOINT_DEBOUNCE_S = 0.6
+# debounce merges the fragments into one coherent turn. Tune via settings.endpoint_debounce_s.
+_ENDPOINT_DEBOUNCE_S = settings.endpoint_debounce_s
 
 GREETING_NUDGE = (
     "Begin the call now: greet the retailer warmly by name in their language, "
@@ -85,10 +86,12 @@ class CallHandler:
         self._generating = False
         self._speaking = False  # True only once audio is actually going out
         self._t_user_final = 0.0
+        self._t_call_start = time.monotonic()  # reset in start(); anchors transcript t_ms
         self._await_first_audio = False
 
     # ---------------------------------------------------------------- lifecycle
     async def start(self) -> None:
+        self._t_call_start = time.monotonic()  # t=0 for every transcript timestamp
         self.stt.on_transcript(self._on_transcript)
         self.stt.on_speech_started(self._on_speech_started)
         await self.stt.connect()
@@ -123,6 +126,11 @@ class CallHandler:
         except Exception:
             pass
 
+    def _elapsed_ms(self) -> int:
+        """Milliseconds since the call started — stamped on each transcript turn so
+        the gap between turns (i.e. the round-trip latency) is visible downstream."""
+        return int((time.monotonic() - self._t_call_start) * 1000)
+
     # ------------------------------------------------------------------ STT cbs
     async def _on_speech_started(self) -> None:
         # Barge in ONLY while the agent is audibly speaking — a real interruption.
@@ -142,8 +150,9 @@ class CallHandler:
             return
         if not text.strip():
             return
-        self.transcript.append({"role": "user", "text": text})
-        await self._emit({"type": "user_transcript", "text": text})
+        t_ms = self._elapsed_ms()
+        self.transcript.append({"role": "user", "text": text, "t_ms": t_ms})
+        await self._emit({"type": "user_transcript", "text": text, "t_ms": t_ms})
         self.messages.append({"role": "user", "content": text})
         self._t_user_final = time.monotonic()
         self._await_first_audio = True
@@ -245,8 +254,9 @@ class CallHandler:
                 self.messages.append(assistant_msg)
 
                 if text:
-                    self.transcript.append({"role": "agent", "text": text})
-                    await self._emit({"type": "agent_text", "text": text})
+                    t_ms = self._elapsed_ms()
+                    self.transcript.append({"role": "agent", "text": text, "t_ms": t_ms})
+                    await self._emit({"type": "agent_text", "text": text, "t_ms": t_ms})
 
                 if not pending:
                     break
