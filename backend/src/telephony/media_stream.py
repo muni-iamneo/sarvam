@@ -55,9 +55,13 @@ class _NullLLM:
         return ""
 
 
-async def _default_handler_factory(db, outlet, system_prompt, send_audio, emit):
+async def _default_handler_factory(
+    db, outlet, system_prompt, send_audio, emit,
+    *, language=None, push_sku_id=None, push_discount_pct=None,
+):
     return CallHandler(
-        db=db, outlet=outlet, system_prompt=system_prompt, send_audio=send_audio, emit_event=emit
+        db=db, outlet=outlet, system_prompt=system_prompt, send_audio=send_audio, emit_event=emit,
+        default_language=language, push_sku_id=push_sku_id, push_discount_pct=push_discount_pct,
     )
 
 
@@ -110,7 +114,18 @@ async def run_media_stream(ws, hub: LiveHub, *, session_factory=AsyncSessionLoca
                 company = (
                     await db.execute(select(m.Company).where(m.Company.id == outlet.company_id))
                 ).scalar_one()
-                prompt = await build_system_prompt(db, outlet, company.name, profile)
+                # Operator-chosen targeting persisted on the call_logs row at dial time.
+                push_sku = None
+                if cl and cl.push_sku_id:
+                    push_sku = (
+                        await db.execute(select(m.Sku).where(m.Sku.id == cl.push_sku_id))
+                    ).scalar_one_or_none()
+                prompt = await build_system_prompt(
+                    db, outlet, company.name, profile,
+                    language=(cl.initial_language if cl else None),
+                    pushed_product=({"name": push_sku.name, "pack": push_sku.pack_size} if push_sku else None),
+                    push_discount_pct=(cl.push_discount_pct if cl else None),
+                )
 
                 async def emit(evt: dict) -> None:
                     if evt.get("type") == "barge_in" and stream_sid:
@@ -120,7 +135,12 @@ async def run_media_stream(ws, hub: LiveHub, *, session_factory=AsyncSessionLoca
                             pass
                     await hub.publish(call_id, evt)
 
-                handler = await handler_factory(db, outlet, prompt, send_audio, emit)
+                handler = await handler_factory(
+                    db, outlet, prompt, send_audio, emit,
+                    language=(cl.initial_language if cl else None),
+                    push_sku_id=(cl.push_sku_id if cl else None),
+                    push_discount_pct=(cl.push_discount_pct if cl else None),
+                )
                 await hub.publish(call_id, {"type": "call_started", "outlet": outlet.name})
                 await handler.start()
 

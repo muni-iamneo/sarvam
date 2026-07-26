@@ -59,6 +59,8 @@ class CallHandler:
         send_audio: Callable[[bytes], Awaitable[None]],
         emit_event: Callable[[dict], Awaitable[None]],
         default_language: Optional[str] = None,
+        push_sku_id: Optional[int] = None,
+        push_discount_pct: Optional[float] = None,
         stt=None,
         tts=None,
         llm=None,
@@ -75,7 +77,9 @@ class CallHandler:
         self.stt = stt or SarvamSTTClient()
         self.tts = tts or SarvamBulbulTTSClient()
         self.llm = llm or DialogueLLMClient()
-        self.ctx = ToolContext(db=db, outlet=outlet)
+        self.ctx = ToolContext(
+            db=db, outlet=outlet, push_sku_id=push_sku_id, push_discount_pct=push_discount_pct
+        )
         self.language = default_language or outlet.language or "hi-IN"
         self.transcript: list[dict] = []
         self.ended = False
