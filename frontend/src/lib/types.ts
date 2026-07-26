@@ -232,6 +232,22 @@ export interface StartCallResponse {
   live_ws: string
 }
 
+// ---- Call targeting (starting language + product push) ----
+
+export interface LanguageOption {
+  code: string
+  label: string
+}
+
+export interface Product {
+  sku_id: number
+  name: string
+  code: string
+  pack_size?: string | null
+  unit_price_rupees: number
+  unit_label: string
+}
+
 // ---- Call scheduling ----
 
 export type ScheduleMode = 'now' | 'scheduled'

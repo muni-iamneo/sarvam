@@ -15,6 +15,13 @@ import { EmptyCard, ErrorCard, LoadingCard } from '../components/States'
 import { api, rupees } from '../lib/api'
 import { statusChip } from '../lib/ui'
 import type { CallLog, OutletOut, StartCallResponse } from '../lib/types'
+import {
+  EMPTY_TARGETING,
+  TargetingFields,
+  targetingBody,
+  targetingValid,
+  type TargetingValue,
+} from '../components/TargetingFields'
 
 // ---- Outlet picker modal ----
 
@@ -31,6 +38,7 @@ function OutletPicker({
   const [q, setQ] = useState('')
   const [to, setTo] = useState('')
   const [picked, setPicked] = useState<OutletOut | null>(null)
+  const [targeting, setTargeting] = useState<TargetingValue>(EMPTY_TARGETING)
   const [starting, setStarting] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
 
@@ -40,12 +48,18 @@ function OutletPicker({
   })
 
   async function start() {
-    if (!picked) return
+    if (!picked || !targetingValid(targeting)) return
     setStarting(true)
     setLocalError(null)
     onBanner(null)
     try {
-      const body: { outlet_id: number; to?: string } = { outlet_id: picked.id }
+      const body: {
+        outlet_id: number
+        to?: string
+        language: string
+        push_sku_id?: number
+        push_discount_pct?: number
+      } = { outlet_id: picked.id, ...targetingBody(targeting) }
       if (to.trim()) body.to = to.trim()
       const res = await api<StartCallResponse>('/calls', {
         method: 'POST',
@@ -144,6 +158,9 @@ function OutletPicker({
         </div>
 
         <div className="mt-4 border-t border-line pt-4">
+          <div className="mb-3">
+            <TargetingFields value={targeting} onChange={setTargeting} />
+          </div>
           <label className="mb-1.5 block text-xs font-semibold text-muted">
             Override “to” number (optional)
           </label>
@@ -169,9 +186,9 @@ function OutletPicker({
             </button>
             <button
               type="button"
-              disabled={!picked || starting}
+              disabled={!picked || !targetingValid(targeting) || starting}
               onClick={start}
-              className="bb-pill py-2.5 disabled:cursor-not-allowed"
+              className="bb-pill py-2.5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <FaPhoneVolume className="h-4 w-4" />
               {starting ? 'Starting…' : picked ? `Call ${picked.name}` : 'Start a call'}

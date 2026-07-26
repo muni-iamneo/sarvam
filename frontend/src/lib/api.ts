@@ -1,3 +1,5 @@
+import type { LanguageOption, Product } from './types'
+
 export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 export const WS_BASE = import.meta.env.VITE_WS_BASE ?? 'ws://localhost:8000'
 
@@ -16,6 +18,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${res.statusText} — ${path}${body ? `: ${body}` : ''}`)
   }
   return (await res.json()) as T
+}
+
+/** Sarvam-supported conversation languages for the call-start dropdown. */
+export function getLanguages(): Promise<LanguageOption[]> {
+  return api<LanguageOption[]>('/api/config/languages')
+}
+
+/** Search active SKUs to pick a product to push on a call. */
+export function searchProducts(q: string): Promise<Product[]> {
+  return api<Product[]>(`/api/products?q=${encodeURIComponent(q)}&limit=25`)
 }
 
 /** Format integer paise as ₹ rupees. */

@@ -13,6 +13,13 @@ import {
 import { api } from '../lib/api'
 import { EmptyCard, ErrorCard, LoadingCard } from './States'
 import type { OutletOut, Schedule, ScheduleItem } from '../lib/types'
+import {
+  EMPTY_TARGETING,
+  TargetingFields,
+  targetingBody,
+  targetingValid,
+  type TargetingValue,
+} from './TargetingFields'
 
 // ---- chips ----
 
@@ -68,6 +75,7 @@ export function ScheduleBuilder({
   const [mode, setMode] = useState<'now' | 'scheduled'>('now')
   const [when, setWhen] = useState(nowLocalValue())
   const [name, setName] = useState('')
+  const [targeting, setTargeting] = useState<TargetingValue>(EMPTY_TARGETING)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -88,7 +96,7 @@ export function ScheduleBuilder({
   }
 
   async function submit() {
-    if (chosen.length === 0) return
+    if (chosen.length === 0 || !targetingValid(targeting)) return
     setBusy(true)
     setError(null)
     try {
@@ -97,6 +105,7 @@ export function ScheduleBuilder({
         mode,
         scheduled_at: mode === 'scheduled' ? when : null,
         items: chosen.map((o) => ({ outlet_id: o.id })),
+        ...targetingBody(targeting),
       }
       const created = await api<Schedule>('/api/schedules', {
         method: 'POST',
@@ -244,6 +253,10 @@ export function ScheduleBuilder({
             Calls run one at a time, in order{mode === 'now' ? ', starting now.' : ', from the scheduled time.'}
           </p>
 
+          <div className="mb-3">
+            <TargetingFields value={targeting} onChange={setTargeting} />
+          </div>
+
           {error && (
             <div className="mb-3 rounded-tile border border-brand-colgate/20 bg-brand-colgate/5 p-3 text-xs text-brand-colgate">
               {error}
@@ -262,7 +275,7 @@ export function ScheduleBuilder({
               </button>
               <button
                 type="button"
-                disabled={chosen.length === 0 || busy}
+                disabled={chosen.length === 0 || !targetingValid(targeting) || busy}
                 onClick={submit}
                 className="bb-pill py-2.5 disabled:cursor-not-allowed disabled:opacity-60"
               >
