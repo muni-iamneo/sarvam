@@ -25,11 +25,21 @@ def twilio_ready() -> bool:
     )
 
 
-async def initiate_call(db: AsyncSession, outlet: m.Outlet, to: str | None = None) -> tuple[int, str]:
+async def initiate_call(
+    db: AsyncSession,
+    outlet: m.Outlet,
+    to: str | None = None,
+    *,
+    language: str | None = None,
+    push_sku_id: int | None = None,
+    push_discount_pct: float | None = None,
+) -> tuple[int, str]:
     """Place an outbound call to ``outlet`` (or an override ``to`` number).
 
     Returns ``(call_id, twilio_call_sid)``. Persists a ``call_logs`` row first so
-    the id is available for the TwiML/media-stream wiring and the live view.
+    the id is available for the TwiML/media-stream wiring and the live view. The
+    per-call targeting (starting language + pushed product/discount) is stored on
+    that row for the media stream to read on the Twilio ``start`` event.
     """
     dest = to or outlet.phone
     if not dest:
@@ -37,7 +47,10 @@ async def initiate_call(db: AsyncSession, outlet: m.Outlet, to: str | None = Non
     if not twilio_ready():
         raise DialError("Twilio/PUBLIC_URL not configured (see .env)", status=503)
 
-    cl = m.CallLog(outlet_id=outlet.id, outcome="initiated")
+    cl = m.CallLog(
+        outlet_id=outlet.id, outcome="initiated",
+        initial_language=language, push_sku_id=push_sku_id, push_discount_pct=push_discount_pct,
+    )
     db.add(cl)
     await db.commit()
     try:

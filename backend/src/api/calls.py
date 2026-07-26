@@ -24,6 +24,7 @@ from src.domain import models as m
 from src.domain import repository as repo
 from src.domain import schemas as s
 from src.domain.db import get_db
+from src.domain.targeting import TargetingError, validate_targeting
 from src.telephony.dialer import DialError, initiate_call
 from src.telephony.media_stream import LiveHub, run_media_stream
 from src.telephony.twiml import build_stream_twiml
@@ -37,6 +38,9 @@ hub = LiveHub()
 class StartCallReq(BaseModel):
     outlet_id: int
     to: str | None = None
+    language: str  # required; validated against SUPPORTED_LANGUAGE_CODES
+    push_sku_id: int | None = None
+    push_discount_pct: float | None = None
 
 
 async def _require_twilio_signature(request: Request, form) -> None:
@@ -65,7 +69,20 @@ async def start_call(req: StartCallReq, db: AsyncSession = Depends(get_db)):
     if not outlet:
         raise HTTPException(status_code=404, detail="Outlet not found")
     try:
-        call_id, sid = await initiate_call(db, outlet, req.to)
+        validate_targeting(req.language, req.push_sku_id, req.push_discount_pct)
+    except TargetingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if req.push_sku_id is not None:
+        sku = (
+            await db.execute(select(m.Sku).where(m.Sku.id == req.push_sku_id))
+        ).scalar_one_or_none()
+        if sku is None or sku.company_id != outlet.company_id:
+            raise HTTPException(status_code=400, detail="pushed product not in this company")
+    try:
+        call_id, sid = await initiate_call(
+            db, outlet, req.to,
+            language=req.language, push_sku_id=req.push_sku_id, push_discount_pct=req.push_discount_pct,
+        )
     except DialError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc))
     to = req.to or outlet.phone
