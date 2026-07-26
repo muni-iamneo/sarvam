@@ -1,7 +1,7 @@
 # Per-Call Targeting: Starting Language + Product Push with Extra Discount
 
 **Date:** 2026-07-26
-**Status:** Approved design (pending spec review)
+**Status:** Implemented (branch `feat/call-targeting`)
 **Scope:** BharatBeat voice agent — add operator-chosen *starting language* and an optional *pushed product with a real extra discount* to both the "start a call" and "schedule calls" flows.
 
 ---
