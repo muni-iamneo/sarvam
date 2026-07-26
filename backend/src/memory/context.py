@@ -39,12 +39,27 @@ async def build_system_prompt(
     outlet: m.Outlet,
     company_name: str = "the company",
     memory_profile: Optional[str] = None,
+    *,
+    language: Optional[str] = None,
+    pushed_product: Optional[dict] = None,
+    push_discount_pct: Optional[float] = None,
 ) -> str:
     catalog = "\n".join(await catalog_lines(db, outlet.company_id)) or "- (no active catalog)"
     mem = memory_profile or "No prior call history for this store yet."
-    lang = outlet.language or "hi-IN"
+    # Operator-chosen opening language seeds the greeting; auto-detect still takes
+    # over mid-call (see CallHandler._on_transcript) if the caller switches.
+    lang = language or outlet.language or "hi-IN"
     where = f" in {outlet.address}" if outlet.address else ""
-    return f"""You are BharatBeat, a warm, efficient Indic voice agent on a phone call with {outlet.name}{where} — a rural FMCG retailer — calling on behalf of {company_name}.
+    push_block = ""
+    if pushed_product and push_discount_pct:
+        push_block = (
+            f"\n\nPRIORITY PUSH (this call): proactively promote {pushed_product['name']} "
+            f"({pushed_product.get('pack') or ''}) — a special extra {push_discount_pct:.0f}% "
+            "discount applies this call. Offer it warmly with the EXACT rupee saving (confirm via "
+            "tools), and on a clear yes call add_line_item then get_order_summary to re-read the new "
+            "total. If they decline, drop it gracefully."
+        )
+    return f"""You are BharatBeat, a warm, efficient Indic voice agent on a phone call with {outlet.name}{where} — a rural FMCG retailer — calling on behalf of {company_name}.{push_block}
 
 STYLE: Speak in the retailer's language (auto-detected; default {lang}). Short, natural, spoken sentences — one idea per turn. Warm and respectful; use the shopkeeper's name. This is a routine weekly renewal call, not a hard sell. Handle interruptions and "no" gracefully. Output ONLY the words you say aloud — never stage directions, narration, or parentheticals like "(wait for response)". Greet only once at the very start; do not re-introduce yourself on later turns — continue the conversation from what was already said.
 
