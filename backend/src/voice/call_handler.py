@@ -70,17 +70,19 @@ class CallHandler:
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
         self._send_audio = send_audio
         self._emit = emit_event
-        # STT stays on auto-detect ("unknown") so the agent can open in the outlet's
-        # default language and follow the caller into whatever language they actually
-        # speak. The STT is messy on short 8 kHz turns, but that was always true — a
-        # reasoning-capable LLM rides through it (see call #9); the real fix is the LLM.
-        self.stt = stt or SarvamSTTClient()
+        # Language is PINNED for the whole call: resolved once from the operator's
+        # choice (default_language) → outlet hint → fallback, and used identically by
+        # STT, the LLM prompt, and TTS. It NEVER changes mid-call. Sarvam's per-utterance
+        # auto-detect is deliberately IGNORED (see _on_transcript) — at 8 kHz it
+        # mis-detects and used to hijack the call into a language the retailer wasn't
+        # speaking (a Kannada store answered entirely in Odia).
+        self.language = default_language or outlet.language or settings.sarvam_tts_default_language
+        self.stt = stt or SarvamSTTClient(language=self.language)
         self.tts = tts or SarvamBulbulTTSClient()
         self.llm = llm or DialogueLLMClient()
         self.ctx = ToolContext(
             db=db, outlet=outlet, push_sku_id=push_sku_id, push_discount_pct=push_discount_pct
         )
-        self.language = default_language or outlet.language or "hi-IN"
         self.transcript: list[dict] = []
         self.ended = False
         self.metrics = SessionMetrics()
@@ -147,8 +149,10 @@ class CallHandler:
             await self._barge_in()
 
     async def _on_transcript(self, text: str, is_final: bool, language: Optional[str]) -> None:
-        if language:
-            self.language = language
+        # Language is pinned at call start — NEVER follow Sarvam's per-utterance
+        # auto-detect (it mis-detects at 8 kHz and used to hijack the call's language).
+        if language and language != self.language:
+            logger.debug("STT detected %s but call is pinned to %s — ignoring", language, self.language)
         if not is_final:
             await self._emit({"type": "partial_transcript", "text": text})
             return

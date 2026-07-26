@@ -75,6 +75,60 @@ def parse_leaked_tool_calls(text: str, known_names: set[str]) -> list[tuple[str,
     return calls
 
 
+class _ContentGate:
+    """Routes streamed content: prose -> on_token (spoken/transcribed), a leaked
+    tool-call template -> held aside for parsing.
+
+    Classifies from the FIRST content so a normal reply forwards with ~zero
+    added latency: an Indic/prose opening is neither a tool name nor its prefix,
+    so it commits to prose immediately. Only an ambiguous leading ASCII
+    tool-name prefix is briefly buffered until ``<arg_key>`` settles it as a
+    leak (held, never spoken) or a non-header char settles it as prose.
+    """
+
+    _CAP = 48  # a real leak shows <arg_key> within ~25 chars; caps prose held while ambiguous
+
+    def __init__(self, on_token: TokenCb, known_names: set[str]) -> None:
+        self._on_token = on_token
+        self._known = known_names
+        # No tools this turn (greeting) => nothing can leak; forward everything.
+        self._mode = "unknown" if known_names else "prose"
+        self._buf = ""       # unclassified leading content
+        self.text = ""       # forwarded (spoken) prose
+        self.leaked = ""     # held leaked tool-call template
+
+    async def _forward(self, s: str) -> None:
+        if s:
+            self.text += s
+            await self._on_token(s)
+
+    async def feed(self, chunk: str) -> None:
+        if self._mode == "prose":
+            await self._forward(chunk)
+            return
+        if self._mode == "leak":
+            self.leaked += chunk
+            return
+        self._buf += chunk                       # unknown: buffer and classify
+        if _LEAK_MARKER in self._buf:
+            self._mode, self.leaked, self._buf = "leak", self._buf, ""
+            return
+        head = self._buf.lstrip().split("\n", 1)[0]
+        # Still (a prefix of) a bare tool name => it could yet become a leak.
+        still_maybe = head == "" or any(n.startswith(head) for n in self._known)
+        if not still_maybe or len(self._buf) > self._CAP:
+            self._mode = "prose"
+            await self._forward(self._buf)
+            self._buf = ""
+
+    async def finish(self) -> None:
+        # Ended while still ambiguous (reply was literally a bare tool-name word,
+        # no args) -> it was prose after all; speak it rather than swallow it.
+        if self._buf:
+            await self._forward(self._buf)
+            self._buf = ""
+
+
 class DialogueLLMClient:
     def __init__(self, model: str | None = None) -> None:
         # Empty key would make AsyncOpenAI raise at construction; fall back to a
@@ -96,7 +150,8 @@ class DialogueLLMClient:
         on_complete: CompleteCb,
     ) -> None:
         """Stream a completion, forwarding text tokens, tool calls, and completion."""
-        text = ""
+        known_names = {t["function"]["name"] for t in tools} if tools else set()
+        gate = _ContentGate(on_token, known_names)
         tool_acc: dict[int, dict] = {}
         t0 = time.monotonic()
         first_content_logged = False
@@ -122,8 +177,7 @@ class DialogueLLMClient:
                     if not first_content_logged:
                         first_content_logged = True
                         logger.info("LLM first content token: %d ms", int((time.monotonic() - t0) * 1000))
-                    text += delta.content
-                    await on_token(delta.content)
+                    await gate.feed(delta.content)
                 for tc in getattr(delta, "tool_calls", None) or []:
                     acc = tool_acc.setdefault(tc.index, {"id": "", "name": "", "args": ""})
                     if tc.id:
@@ -135,6 +189,8 @@ class DialogueLLMClient:
                             acc["args"] += tc.function.arguments
         except Exception as exc:
             logger.error("Dialogue LLM stream failed: %s", exc)
+
+        await gate.finish()
 
         if finish_reason == "length":
             # Hit max_tokens — the reply (or a tool call's JSON args) was cut off.
@@ -154,7 +210,19 @@ class DialogueLLMClient:
                 args = {}
             await on_tool_call(acc["name"], args, acc["id"])
 
-        await on_complete(text)
+        # Recover any tool call Sarvam leaked as plain text instead of via the
+        # structured field: execute it (and keep it out of on_complete's text so
+        # it's never spoken or stored as the assistant turn).
+        if gate.leaked:
+            leaked = parse_leaked_tool_calls(gate.leaked, known_names)
+            logger.warning(
+                "LLM leaked %d tool-call(s) as text (server tool-parser miss); recovered %d",
+                gate.leaked.count(_LEAK_MARKER), len(leaked),
+            )
+            for i, (name, args) in enumerate(leaked):
+                await on_tool_call(name, args, f"leaked_{i}")
+
+        await on_complete(gate.text)
 
     async def complete(self, messages: list[dict], max_tokens: int = 400) -> str:
         """Non-streaming completion (used for post-call extraction)."""
